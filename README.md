@@ -14,26 +14,6 @@ This project is a **Machine Learning-powered** web application that predicts the
 
 ---
 
-## 📂 Repository Structure
-
-.
-├── .idea/ # Project configuration files
-├── IPL_Winning_probability.ipynb # Model training & analysis notebook
-├── app.py # Main Streamlit app
-├── deliveries.csv # Ball-by-ball IPL match data
-├── joblib_model.pkl # Pre-trained ML model
-├── matches.csv # IPL match summaries
-├── most_runs_average_strikerate.csv # Player performance stats
-├── pipe.pkl # Preprocessing pipeline
-├── Players.xlsx # Players information
-├── requirements.txt # Dependencies list
-├── teams.csv # IPL team information
-├── teamwise_home_and_away.csv # Home/away match records
-├── test_model.py # Model testing script
-
-
----
-
 ## 📊 Dataset
 
 The project uses multiple IPL datasets:
@@ -100,9 +80,3 @@ Built with Python, Pandas, scikit-learn, Streamlit
 
 
 ---
-
-If you want, I can also make you a **flow diagram** showing:  
-`User Inputs → Preprocessing Pipeline → ML Model → Winning Probability Output`  
-which will make the README more visually appealing.  
-
-Do you want me to create that diagram?
