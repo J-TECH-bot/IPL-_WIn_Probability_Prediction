@@ -124,7 +124,13 @@ cities = ['Mumbai', 'Kolkata', 'Delhi', 'Hyderabad', 'Bangalore', 'Chennai',
           'Ahmedabad', 'Cuttack', 'Nagpur', 'Visakhapatnam', 'Pune',
           'Raipur', 'Abu Dhabi', 'Sharjah', 'Ranchi']
 
-pipe = joblib.load('pipe.pkl')
+try:
+    pipe = joblib.load('pipe.pkl')
+    st.success("Model loaded successfully!")
+except Exception as e:
+    st.error(f"Error loading model: {str(e)}")
+    st.stop()
+
 allowed_categories = _extract_allowed_categories(pipe)
 
 ui_teams = _allowed_for(allowed_categories, ['batting_team', 'bat_team'], teams)
@@ -185,13 +191,23 @@ if st.button('predict probability'):
 
     st.table(input_df)
 
-    if hasattr(pipe, 'predict_proba'):
-        result = pipe.predict_proba(X)
-        st.text(result)
-        loss = result[0][0]
-        win = result[0][1]
-        st.header(batting_team + "_" + str(round(win*100)) + "%")
-        st.header(bowling_team + "_" + str(round(loss*100)) + "%")
-    else:
-        pred = pipe.predict(X)
-        st.text(pred)
+    try:
+        if hasattr(pipe, 'predict_proba'):
+            result = pipe.predict_proba(X)
+            st.text(result)
+            loss = result[0][0]
+            win = result[0][1]
+            st.header(batting_team + "_" + str(round(win*100)) + "%")
+            st.header(bowling_team + "_" + str(round(loss*100)) + "%")
+        else:
+            pred = pipe.predict(X)
+            st.text(pred)
+    except Exception as e:
+        st.error(f"Prediction error: {str(e)}")
+        st.write("Debug info:")
+        st.write(f"Input DataFrame shape: {X.shape}")
+        st.write(f"Input DataFrame columns: {list(X.columns)}")
+        st.write(f"Input DataFrame dtypes: {X.dtypes.to_dict()}")
+        st.write(f"Model type: {type(pipe)}")
+        if hasattr(pipe, 'named_steps'):
+            st.write(f"Pipeline steps: {list(pipe.named_steps.keys())}")
