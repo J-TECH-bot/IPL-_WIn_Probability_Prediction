@@ -204,6 +204,40 @@ if st.button('predict probability'):
             st.text(pred)
     except Exception as e:
         st.error(f"Prediction error: {str(e)}")
+        
+        # Try fallback approach
+        st.write("Trying fallback prediction method...")
+        try:
+            # Try to get the final estimator directly
+            if hasattr(pipe, 'steps') and len(pipe.steps) > 0:
+                final_estimator = pipe.steps[-1][1]
+                st.write(f"Final estimator: {type(final_estimator)}")
+                
+                # Try to transform the data manually through the pipeline
+                X_transformed = X.copy()
+                for step_name, step in pipe.steps[:-1]:  # All steps except the last one
+                    if hasattr(step, 'transform'):
+                        X_transformed = step.transform(X_transformed)
+                        st.write(f"After {step_name}: {X_transformed.shape}")
+                
+                # Make prediction with final estimator
+                if hasattr(final_estimator, 'predict_proba'):
+                    result = final_estimator.predict_proba(X_transformed)
+                    st.success("Fallback prediction successful!")
+                    st.text(result)
+                    loss = result[0][0]
+                    win = result[0][1]
+                    st.header(batting_team + "_" + str(round(win*100)) + "%")
+                    st.header(bowling_team + "_" + str(round(loss*100)) + "%")
+                else:
+                    pred = final_estimator.predict(X_transformed)
+                    st.success("Fallback prediction successful!")
+                    st.text(pred)
+            else:
+                st.error("Could not extract final estimator from pipeline")
+        except Exception as fallback_error:
+            st.error(f"Fallback also failed: {str(fallback_error)}")
+        
         st.write("Debug info:")
         st.write(f"Input DataFrame shape: {X.shape}")
         st.write(f"Input DataFrame columns: {list(X.columns)}")
@@ -211,3 +245,22 @@ if st.button('predict probability'):
         st.write(f"Model type: {type(pipe)}")
         if hasattr(pipe, 'named_steps'):
             st.write(f"Pipeline steps: {list(pipe.named_steps.keys())}")
+            
+            # Debug each step
+            for step_name, step in pipe.named_steps.items():
+                st.write(f"\n**Step '{step_name}':**")
+                st.write(f"  Type: {type(step)}")
+                if hasattr(step, 'transformers'):
+                    st.write(f"  Transformers: {step.transformers}")
+                if hasattr(step, 'transformers_'):
+                    st.write(f"  Fitted transformers: {step.transformers_}")
+                if hasattr(step, 'feature_names_in_'):
+                    st.write(f"  Feature names: {list(step.feature_names_in_)}")
+                    
+                # Check if it's a ColumnTransformer
+                if hasattr(step, 'transformers') or hasattr(step, 'transformers_'):
+                    transformers = getattr(step, 'transformers_', None) or getattr(step, 'transformers', [])
+                    for i, (name, transformer, columns) in enumerate(transformers):
+                        st.write(f"    Transformer {i}: {name} - {type(transformer)} - {columns}")
+                        if hasattr(transformer, 'categories_'):
+                            st.write(f"      Categories: {transformer.categories_}")
