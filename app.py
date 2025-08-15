@@ -216,9 +216,11 @@ if st.button('predict probability'):
                 # Try to transform the data manually through the pipeline
                 X_transformed = X.copy()
                 for step_name, step in pipe.steps[:-1]:  # All steps except the last one
-                    if hasattr(step, 'transform'):
+                    if hasattr(step, 'transform') and not isinstance(step, str):
                         X_transformed = step.transform(X_transformed)
                         st.write(f"After {step_name}: {X_transformed.shape}")
+                    else:
+                        st.warning(f"Step {step_name} is not a valid transformer: {type(step)}")
                 
                 # Make prediction with final estimator
                 if hasattr(final_estimator, 'predict_proba'):
@@ -237,6 +239,32 @@ if st.button('predict probability'):
                 st.error("Could not extract final estimator from pipeline")
         except Exception as fallback_error:
             st.error(f"Fallback also failed: {str(fallback_error)}")
+            
+            # Last resort: try to use the final estimator with raw data
+            st.write("Trying last resort method with raw data...")
+            try:
+                if hasattr(pipe, 'steps') and len(pipe.steps) > 0:
+                    final_estimator = pipe.steps[-1][1]
+                    if hasattr(final_estimator, 'predict_proba'):
+                        # Convert categorical columns to numeric for raw prediction
+                        X_numeric = X.copy()
+                        for col in ['batting_team', 'bowling_team', 'city']:
+                            if col in X_numeric.columns:
+                                X_numeric[col] = pd.Categorical(X_numeric[col]).codes
+                        
+                        result = final_estimator.predict_proba(X_numeric)
+                        st.success("Last resort prediction successful!")
+                        st.text(result)
+                        loss = result[0][0]
+                        win = result[0][1]
+                        st.header(batting_team + "_" + str(round(win*100)) + "%")
+                        st.header(bowling_team + "_" + str(round(loss*100)) + "%")
+                    else:
+                        st.error("Final estimator doesn't support predict_proba")
+                else:
+                    st.error("No steps found in pipeline")
+            except Exception as last_error:
+                st.error(f"Last resort also failed: {str(last_error)}")
         
         st.write("Debug info:")
         st.write(f"Input DataFrame shape: {X.shape}")
@@ -246,21 +274,33 @@ if st.button('predict probability'):
         if hasattr(pipe, 'named_steps'):
             st.write(f"Pipeline steps: {list(pipe.named_steps.keys())}")
             
-            # Debug each step
+            # Debug each step safely
             for step_name, step in pipe.named_steps.items():
                 st.write(f"\n**Step '{step_name}':**")
                 st.write(f"  Type: {type(step)}")
-                if hasattr(step, 'transformers'):
-                    st.write(f"  Transformers: {step.transformers}")
-                if hasattr(step, 'transformers_'):
-                    st.write(f"  Fitted transformers: {step.transformers_}")
-                if hasattr(step, 'feature_names_in_'):
-                    st.write(f"  Feature names: {list(step.feature_names_in_)}")
+                
+                # Safely check transformers
+                try:
+                    if hasattr(step, 'transformers'):
+                        st.write(f"  Has transformers attribute")
+                    if hasattr(step, 'transformers_'):
+                        st.write(f"  Has fitted transformers attribute")
+                    if hasattr(step, 'feature_names_in_'):
+                        st.write(f"  Feature names: {list(step.feature_names_in_)}")
+                except Exception as debug_error:
+                    st.write(f"  Error accessing step attributes: {str(debug_error)}")
                     
-                # Check if it's a ColumnTransformer
+                # Check if it's a ColumnTransformer and inspect safely
                 if hasattr(step, 'transformers') or hasattr(step, 'transformers_'):
-                    transformers = getattr(step, 'transformers_', None) or getattr(step, 'transformers', [])
-                    for i, (name, transformer, columns) in enumerate(transformers):
-                        st.write(f"    Transformer {i}: {name} - {type(transformer)} - {columns}")
-                        if hasattr(transformer, 'categories_'):
-                            st.write(f"      Categories: {transformer.categories_}")
+                    try:
+                        transformers = getattr(step, 'transformers_', None) or getattr(step, 'transformers', [])
+                        for i, transformer_info in enumerate(transformers):
+                            if isinstance(transformer_info, (list, tuple)) and len(transformer_info) >= 3:
+                                name, transformer, columns = transformer_info
+                                st.write(f"    Transformer {i}: {name} - {type(transformer)} - {columns}")
+                                if hasattr(transformer, 'categories_') and not isinstance(transformer, str):
+                                    st.write(f"      Categories: {transformer.categories_}")
+                            else:
+                                st.write(f"    Transformer {i}: Invalid format - {transformer_info}")
+                    except Exception as transformer_error:
+                        st.write(f"    Error inspecting transformers: {str(transformer_error)}")
