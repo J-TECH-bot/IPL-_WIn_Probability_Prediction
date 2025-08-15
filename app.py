@@ -240,20 +240,44 @@ if st.button('predict probability'):
         except Exception as fallback_error:
             st.error(f"Fallback also failed: {str(fallback_error)}")
             
-            # Last resort: try to use the final estimator with raw data
-            st.write("Trying last resort method with raw data...")
+            # Manual transformation based on debug output
+            st.write("Trying manual transformation method...")
             try:
                 if hasattr(pipe, 'steps') and len(pipe.steps) > 0:
                     final_estimator = pipe.steps[-1][1]
                     if hasattr(final_estimator, 'predict_proba'):
-                        # Convert categorical columns to numeric for raw prediction
-                        X_numeric = X.copy()
-                        for col in ['batting_team', 'bowling_team', 'city']:
-                            if col in X_numeric.columns:
-                                X_numeric[col] = pd.Categorical(X_numeric[col]).codes
+                        # Manual one-hot encoding based on the categories we saw
+                        team_categories = ['Chennai Super Kings', 'Deccan Chargers', 'Delhi Capitals', 'Delhi Daredevils', 
+                                         'Kolkata Knight Riders', 'Mumbai Indians', 'Rajasthan Royals', 'Sunrisers Hyderabad']
+                        city_categories = ['Abu Dhabi', 'Ahmedabad', 'Bangalore', 'Bloemfontein', 'Cape Town', 'Centurion', 
+                                         'Chennai', 'Cuttack', 'Delhi', 'Durban', 'East London', 'Hyderabad', 'Jaipur', 
+                                         'Johannesburg', 'Kimberley', 'Kolkata', 'Mumbai', 'Nagpur', 'Port Elizabeth', 
+                                         'Pune', 'Raipur', 'Ranchi', 'Sharjah', 'Visakhapatnam']
                         
-                        result = final_estimator.predict_proba(X_numeric)
-                        st.success("Last resort prediction successful!")
+                        # Create one-hot encoded features
+                        features = []
+                        
+                        # One-hot encode batting team (8 features)
+                        batting_team_encoded = [1 if team == batting_team else 0 for team in team_categories]
+                        features.extend(batting_team_encoded)
+                        
+                        # One-hot encode bowling team (8 features)
+                        bowling_team_encoded = [1 if team == bowling_team else 0 for team in team_categories]
+                        features.extend(bowling_team_encoded)
+                        
+                        # One-hot encode city (24 features)
+                        city_encoded = [1 if city == selected_city else 0 for city in city_categories]
+                        features.extend(city_encoded)
+                        
+                        # Add numeric features (6 features)
+                        features.extend([runs_left, balls_left, wickets, score, crr, rrr])
+                        
+                        # Total: 8 + 8 + 24 + 6 = 46 features
+                        X_manual = pd.DataFrame([features])
+                        st.write(f"Manual transformation shape: {X_manual.shape}")
+                        
+                        result = final_estimator.predict_proba(X_manual)
+                        st.success("Manual transformation prediction successful!")
                         st.text(result)
                         loss = result[0][0]
                         win = result[0][1]
@@ -263,8 +287,34 @@ if st.button('predict probability'):
                         st.error("Final estimator doesn't support predict_proba")
                 else:
                     st.error("No steps found in pipeline")
-            except Exception as last_error:
-                st.error(f"Last resort also failed: {str(last_error)}")
+            except Exception as manual_error:
+                st.error(f"Manual transformation also failed: {str(manual_error)}")
+                
+                # Last resort: try to use the final estimator with raw data
+                st.write("Trying last resort method with raw data...")
+                try:
+                    if hasattr(pipe, 'steps') and len(pipe.steps) > 0:
+                        final_estimator = pipe.steps[-1][1]
+                        if hasattr(final_estimator, 'predict_proba'):
+                            # Convert categorical columns to numeric for raw prediction
+                            X_numeric = X.copy()
+                            for col in ['batting_team', 'bowling_team', 'city']:
+                                if col in X_numeric.columns:
+                                    X_numeric[col] = pd.Categorical(X_numeric[col]).codes
+                            
+                            result = final_estimator.predict_proba(X_numeric)
+                            st.success("Last resort prediction successful!")
+                            st.text(result)
+                            loss = result[0][0]
+                            win = result[0][1]
+                            st.header(batting_team + "_" + str(round(win*100)) + "%")
+                            st.header(bowling_team + "_" + str(round(loss*100)) + "%")
+                        else:
+                            st.error("Final estimator doesn't support predict_proba")
+                    else:
+                        st.error("No steps found in pipeline")
+                except Exception as last_error:
+                    st.error(f"Last resort also failed: {str(last_error)}")
         
         st.write("Debug info:")
         st.write(f"Input DataFrame shape: {X.shape}")
