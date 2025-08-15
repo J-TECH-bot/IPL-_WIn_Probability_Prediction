@@ -1,10 +1,121 @@
 import streamlit as st
 import joblib
 import pandas as pd
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+
+
+def _get_expected_columns_from_model(fitted_model):
+    expected = None
+    if hasattr(fitted_model, 'feature_names_in_'):
+        expected = list(fitted_model.feature_names_in_)
+    if expected is None and hasattr(fitted_model, 'named_steps'):
+        for step_name, step in fitted_model.named_steps.items():
+            if hasattr(step, 'feature_names_in_'):
+                expected = list(step.feature_names_in_)
+                break
+    if expected is None and hasattr(fitted_model, 'named_steps'):
+        for step_name, step in fitted_model.named_steps.items():
+            if isinstance(step, ColumnTransformer):
+                cols = []
+                transformers = getattr(step, 'transformers_', None) or getattr(step, 'transformers', [])
+                for name, transformer, columns in transformers:
+                    if isinstance(columns, (list, tuple)):
+                        cols.extend([c for c in columns if isinstance(c, str)])
+                if cols:
+                    expected = cols
+                    break
+    return expected
+
+
+def _extract_allowed_categories(fitted_model):
+    allowed = {}
+    if hasattr(fitted_model, 'named_steps'):
+        for _, step in fitted_model.named_steps.items():
+            if isinstance(step, ColumnTransformer):
+                transformers = getattr(step, 'transformers_', None) or getattr(step, 'transformers', [])
+                for name, transformer, columns in transformers:
+                    enc = None
+                    if hasattr(transformer, 'named_steps'):
+                        for _, sub in transformer.named_steps.items():
+                            if isinstance(sub, OneHotEncoder):
+                                enc = sub
+                                break
+                    elif isinstance(transformer, OneHotEncoder):
+                        enc = transformer
+                    if enc is not None and hasattr(enc, 'categories_') and isinstance(columns, (list, tuple)):
+                        for idx, col in enumerate(columns):
+                            if isinstance(col, str) and idx < len(enc.categories_):
+                                allowed[col] = list(enc.categories_[idx])
+    return allowed
+
+
+def _align_input_columns(df: pd.DataFrame, fitted_model) -> pd.DataFrame:
+    expected_columns = _get_expected_columns_from_model(fitted_model)
+    if not expected_columns:
+        return df
+
+    synonyms = {
+        'venue': 'city',
+        'city': 'venue',
+        'wickets_left': 'wickets',
+        'wickets_in_hand': 'wickets',
+        'current_run_rate': 'crr',
+        'required_run_rate': 'rrr',
+        'total_runs': 'total_runs_x',
+        'total_runs_x': 'total_runs',
+        'bat_team': 'batting_team',
+        'bowl_team': 'bowling_team',
+    }
+
+    aligned = {}
+    for col in expected_columns:
+        if col in df.columns:
+            aligned[col] = df[col].values
+        elif col in synonyms and synonyms[col] in df.columns:
+            aligned[col] = df[synonyms[col]].values
+        else:
+            if any(token in col for token in ['rate', 'runs', 'balls', 'wicket', 'over', 'score', 'target']):
+                aligned[col] = [0]
+            else:
+                aligned[col] = ['unknown']
+
+    aligned_df = pd.DataFrame(aligned)
+
+    missing = [c for c in expected_columns if c not in df.columns and not (c in synonyms and synonyms[c] in df.columns)]
+    extra = [c for c in df.columns if c not in expected_columns and not (c in synonyms and synonyms[c] in expected_columns)]
+    if missing:
+        st.info(f"Aligning to model schema. Missing columns filled with defaults: {missing}")
+    if extra:
+        st.info(f"Input had extra columns not used by model: {extra}")
+    st.caption(f"Model expects columns: {expected_columns}")
+
+    return aligned_df
+
+
+def _normalize_value(value: str, allowed: set, synonyms_map: dict) -> str:
+    if value in allowed:
+        return value
+    candidate = synonyms_map.get(value)
+    if candidate and candidate in allowed:
+        return candidate
+    reverse = {v: k for k, v in synonyms_map.items()}
+    candidate = reverse.get(value)
+    if candidate and candidate in allowed:
+        return candidate
+    return value
+
+
+def _allowed_for(allowed_categories: dict, keys: list, fallback: list) -> list:
+    for key in keys:
+        if key in allowed_categories:
+            return sorted(allowed_categories[key])
+    return sorted(fallback)
+
 
 teams = ['Sunrisers Hyderabad', 'Mumbai Indians',
          'Royal Challengers Bangalore', 'Kolkata Knight Riders',
-         'Kings XI Punjab', 'Chennai Super Kings',
+         'Punjab Kings', 'Chennai Super Kings',
          'Rajasthan Royals', 'Delhi Capitals']
 
 cities = ['Mumbai', 'Kolkata', 'Delhi', 'Hyderabad', 'Bangalore', 'Chennai',
@@ -14,16 +125,20 @@ cities = ['Mumbai', 'Kolkata', 'Delhi', 'Hyderabad', 'Bangalore', 'Chennai',
           'Raipur', 'Abu Dhabi', 'Sharjah', 'Ranchi']
 
 pipe = joblib.load('pipe.pkl')
+allowed_categories = _extract_allowed_categories(pipe)
+
+ui_teams = _allowed_for(allowed_categories, ['batting_team', 'bat_team'], teams)
+ui_cities = _allowed_for(allowed_categories, ['city', 'venue'], cities)
 
 st.title('IPL Probability Prediction')
 
 col1, col2 = st.columns(2)
 with col1:
-    batting_team = st.selectbox('Select the batting team', sorted(teams))
+    batting_team = st.selectbox('Select the batting team', ui_teams)
 with col2:
-    bowling_team = st.selectbox('Select the bowling team', sorted(teams))
+    bowling_team = st.selectbox('Select the bowling team', ui_teams)
 
-selected_city = st.selectbox('Select the city', sorted(cities))
+selected_city = st.selectbox('Select the city', ui_cities)
 target = st.number_input('Target', min_value=1, step=1)
 col3, col4, col5 = st.columns(3)
 with col3:
@@ -40,18 +155,43 @@ if st.button('predict probability'):
     crr = score/overs
     rrr = (runs_left * 6)/balls_left if balls_left > 0 else 0
 
+    team_synonyms = {
+        'Kings XI Punjab': 'Punjab Kings',
+        'Punjab Kings': 'Punjab Kings',
+        'Delhi Daredevils': 'Delhi Capitals',
+        'Delhi Capitals': 'Delhi Capitals',
+    }
+    city_synonyms = {
+        'Bangalore': 'Bengaluru',
+        'Bengaluru': 'Bangalore',
+        'Bombay': 'Mumbai',
+        'Mumbai': 'Mumbai',
+    }
+
+    allowed_bat = set(allowed_categories.get('batting_team', allowed_categories.get('bat_team', ui_teams)))
+    allowed_bowl = set(allowed_categories.get('bowling_team', allowed_categories.get('bowl_team', ui_teams)))
+    allowed_city = set(allowed_categories.get('city', allowed_categories.get('venue', ui_cities)))
+
+    batting_team = _normalize_value(batting_team, allowed_bat, team_synonyms)
+    bowling_team = _normalize_value(bowling_team, allowed_bowl, team_synonyms)
+    selected_city = _normalize_value(selected_city, allowed_city, city_synonyms)
+
     input_df = pd.DataFrame({'batting_team': [batting_team], 'bowling_team': [bowling_team], 'city': [selected_city],
                              'runs_left': [runs_left], 'balls_left': [balls_left],
-                             'wickets': [wickets], 'crr': [crr], 'rrr': [rrr]})
+                             'wickets': [wickets], 'total_runs_x': [score],
+                             'crr': [crr], 'rrr': [rrr]})
+
+    X = _align_input_columns(input_df, pipe)
 
     st.table(input_df)
-    #features = ['batting_team', 'bowling_team', 'city', 'runs_left', 'balls_left', 'wickets', 'crr', 'rrr']
-    # X = input_df[features].to_numpy()
-    # st.table(X)
 
-    result = pipe.predict_proba(input_df)
-    st.text(result)
-    loss = result[0][0]
-    win = result[0][1]
-    st.header(batting_team + "_" + str(round(win*100)) + "%")
-    st.header(bowling_team + "_" + str(round(loss*100)) + "%")
+    if hasattr(pipe, 'predict_proba'):
+        result = pipe.predict_proba(X)
+        st.text(result)
+        loss = result[0][0]
+        win = result[0][1]
+        st.header(batting_team + "_" + str(round(win*100)) + "%")
+        st.header(bowling_team + "_" + str(round(loss*100)) + "%")
+    else:
+        pred = pipe.predict(X)
+        st.text(pred)
